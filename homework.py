@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import requests
 from telebot import TeleBot
 
-from exceptions import ExceptionError, TokenError
+from exceptions import ApiError, TokenError
 load_dotenv()
 
 
@@ -28,23 +28,25 @@ HOMEWORK_VERDICTS = {
 
 def check_tokens():
     """Проверка наличия токенов в переменных окружения."""
-    token_check = {
-        'PRACTICUM_TOKEN': PRACTICUM_TOKEN,
-        'TELEGRAM_TOKEN': TELEGRAM_TOKEN,
-        'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID,
+    is_all_tokens_setted = True
+    token_check = (
+        ('PRACTICUM_TOKEN', PRACTICUM_TOKEN),
+        ('TELEGRAM_TOKEN', TELEGRAM_TOKEN),
+        ('TELEGRAM_CHAT_ID', TELEGRAM_CHAT_ID),
 
-    }
-    for key, token in token_check.items():
+    )
+    for key, token in token_check:
         if not token:
             logging.critical(f'Отсутствует обязательная переменная'
                              f'окружения {key}')
-            raise TokenError(f'Отсутствует обязательная переменная'
-                             f'окружения {key}')
+            is_all_tokens_setted = False
+        return is_all_tokens_setted
 
 
 def send_message(bot, message):
     """Отправка сообщения в телеграм."""
     try:
+        logging.info(f'Отправка сообщения в Telegram: {message}')
         bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
             text=message,
@@ -62,15 +64,14 @@ def get_api_answer(timestamp):
             headers=HEADERS,
             params={'from_date': timestamp}
         )
-        if response.status_code != 200:
-            raise ExceptionError(
-                f'Ошибка при запросе к API: статус код {response.status_code}'
-            )
-        response.raise_for_status()
-    except requests.ExceptionError as error:
+    except requests.RequestException as error:
         logging.error(f'Ошибка при запросе к API Яндекс.Практикум: {error}')
-        raise ExceptionError(
+        raise ApiError(
             f'Ошибка при запросе к API Яндекс.Практикум: {error}'
+        )
+    if response.status_code != 200:
+        raise ApiError(
+            f'Ошибка при запросе к API: статус код {response.status_code}'
         )
     return response.json()
 
@@ -78,55 +79,51 @@ def get_api_answer(timestamp):
 def check_response(response):
     """Проверка ответа API."""
     if not isinstance(response, dict):
-        raise TypeError('Ожидается словарь response, но получен другой тип')
-
-    try:
-        if 'homeworks' not in response:
-            raise KeyError('В ответе API отсутствует ключ "homeworks"')
-    except KeyError as error:
-        logging.error(f'Ошибка при обработке ответа API: {error}')
-        raise KeyError(
-            f'Ошибка при обработке ответа API: {error}'
-        )
-    if not isinstance(response['homeworks'], list):
-        raise TypeError(f'Ожидается список homeworks,'
-                        f' но получен {response["homeworks"]}')
-    return response['homeworks']
+        msg = 'Ожидается словарь response, но получен другой тип'
+        logging.error(msg)
+        raise TypeError(msg)
+    if 'homeworks' not in response:
+        msg = 'В ответе API отсутствует ключ "homeworks"'
+        logging.error(msg)
+        raise KeyError(msg)
+    homework = response['homeworks']
+    if not isinstance(homework, list):
+        msg = f'Ожидается список homeworks, но получен {homework}'
+        logging.error(msg)
+        raise TypeError(msg)
+    return homework
 
 
 def parse_status(homework):
     """Обработка статуса домашней работы."""
     homework_name = homework.get('homework_name')
-    try:
-        if homework_name is None:
-
-            raise KeyError('В ответе API отсутствует ключ "homework_name"')
-
-        status = homework.get('status')
-        if status is None:
-            raise KeyError('В ответе API отсутствует ключ "status"')
-
-        verdict = HOMEWORK_VERDICTS.get(status)
-        if verdict is None:
-            raise ValueError(f'Неизвестный статус домашней работы: {status}')
-    except (KeyError, ValueError) as error:
-        logging.error(f'Ошибка при обработке статуса домашней работы: {error}')
-        raise ExceptionError(
-            f'Ошибка при обработке статуса домашней работы: {error}'
-        )
+    if homework_name is None:
+        msg = 'В ответе API отсутствует ключ "homework_name"'
+        logging.error(msg)
+        raise KeyError(msg)
+    status = homework.get('status')
+    if status is None:
+        msg = 'В ответе API отсутствует ключ "status"'
+        logging.error(msg)
+        raise KeyError(msg)
+    verdict = HOMEWORK_VERDICTS.get(status)
+    if verdict is None:
+        msg = f'Неизвестный статус домашней работы: {status}'
+        logging.error(msg)
+        raise ValueError(msg)
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def main():
     """Основная логика работы бота."""
-    check_tokens()
-
+    if not check_tokens():
+        raise TokenError("Отсутствует обязательная переменная окружения")
     # Создаем объект класса бота
     bot = TeleBot(token=TELEGRAM_TOKEN)
     logging.info('Бот запущен')
     send_message(bot, 'Бот запущен')
     logging.debug('Сообщение успешно отправлено в Telegram: Бот запущен')
-    timestamp = 0
+    timestamp = int(time.time())
     old_status = ''
     """Основной цикл программы"""
     while True:
@@ -134,7 +131,6 @@ def main():
             response = get_api_answer(timestamp)
             timestamp = response.get('current_date', timestamp)
             homeworks = check_response(response)
-            logging.debug('Изменений статуса не найденно')
             if homeworks:
                 new_status = parse_status(homeworks[0])
             else:
@@ -143,7 +139,7 @@ def main():
                 send_message(bot, new_status)
                 old_status = new_status
             else:
-                logging.error('Отсутствие в ответе новых статусов')
+                logging.debug('Отсутствие в ответе новых статусов')
         except Exception as error:
             new_status = f'Сбой в работе программы: {error}.'
             logging.error(new_status)

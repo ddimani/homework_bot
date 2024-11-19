@@ -1,6 +1,6 @@
 class TokenError(Exception):
-    pass
+    """Исключения в случае отсутствие токена"""
 
 
-class ExceptionError(Exception):
-    pass
+class ApiError(Exception):
+    """Исключения в случае ошибка при запросе к API"""
