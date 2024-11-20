@@ -1,12 +1,14 @@
 import logging
 import os
+import sys
 import time
 
 from dotenv import load_dotenv
 import requests
 from telebot import TeleBot
+from telebot.apihelper import ApiException
 
-from exceptions import ApiError, TokenError
+from exceptions import ApiError
 load_dotenv()
 
 
@@ -40,7 +42,7 @@ def check_tokens():
             logging.critical(f'Отсутствует обязательная переменная'
                              f'окружения {key}')
             is_all_tokens_setted = False
-        return is_all_tokens_setted
+    return is_all_tokens_setted
 
 
 def send_message(bot, message):
@@ -52,7 +54,7 @@ def send_message(bot, message):
             text=message,
         )
         logging.debug(f'Сообщение успешно отправлено в Telegram: {message}')
-    except Exception as error:
+    except (ApiException, requests.RequestException) as error:
         logging.error(f'Ошибка при отправке сообщения в Telegram: {error}')
 
 
@@ -65,7 +67,6 @@ def get_api_answer(timestamp):
             params={'from_date': timestamp}
         )
     except requests.RequestException as error:
-        logging.error(f'Ошибка при запросе к API Яндекс.Практикум: {error}')
         raise ApiError(
             f'Ошибка при запросе к API Яндекс.Практикум: {error}'
         )
@@ -79,45 +80,36 @@ def get_api_answer(timestamp):
 def check_response(response):
     """Проверка ответа API."""
     if not isinstance(response, dict):
-        msg = 'Ожидается словарь response, но получен другой тип'
-        logging.error(msg)
-        raise TypeError(msg)
+        raise TypeError('Ожидается словарь response, но получен другой тип')
     if 'homeworks' not in response:
-        msg = 'В ответе API отсутствует ключ "homeworks"'
-        logging.error(msg)
-        raise KeyError(msg)
+        raise KeyError('В ответе API отсутствует ключ "homeworks"')
     homework = response['homeworks']
     if not isinstance(homework, list):
-        msg = f'Ожидается список homeworks, но получен {homework}'
-        logging.error(msg)
-        raise TypeError(msg)
+        raise TypeError(f'Ожидается список homeworks, но получен {homework}')
     return homework
 
 
 def parse_status(homework):
     """Обработка статуса домашней работы."""
-    homework_name = homework.get('homework_name')
-    if homework_name is None:
-        msg = 'В ответе API отсутствует ключ "homework_name"'
-        logging.error(msg)
-        raise KeyError(msg)
-    status = homework.get('status')
-    if status is None:
-        msg = 'В ответе API отсутствует ключ "status"'
-        logging.error(msg)
-        raise KeyError(msg)
-    verdict = HOMEWORK_VERDICTS.get(status)
-    if verdict is None:
-        msg = f'Неизвестный статус домашней работы: {status}'
-        logging.error(msg)
-        raise ValueError(msg)
+    # homework_name = homework.get('homework_name')
+    if 'homework_name' in homework and 'status' in homework:
+        homework_name = homework['homework_name']
+        status = homework['status']
+        verdict = HOMEWORK_VERDICTS.get(status)
+        if verdict is None:
+            raise ValueError(f'Неизвестный статус домашней работы: {status}')
+    else:
+        raise KeyError(
+            'В ответе API отсутствует ключ "status" или "homework_name"'
+        )
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def main():
     """Основная логика работы бота."""
     if not check_tokens():
-        raise TokenError("Отсутствует обязательная переменная окружения")
+        # raise TokenError("Отсутствует обязательная переменная окружения")
+        sys.exit('Отсутствует обязательная переменная окружения')
     # Создаем объект класса бота
     bot = TeleBot(token=TELEGRAM_TOKEN)
     logging.info('Бот запущен')
