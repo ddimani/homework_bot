@@ -92,23 +92,21 @@ def check_response(response):
 def parse_status(homework):
     """Обработка статуса домашней работы."""
     # homework_name = homework.get('homework_name')
-    if 'homework_name' in homework and 'status' in homework:
-        homework_name = homework['homework_name']
-        status = homework['status']
-        verdict = HOMEWORK_VERDICTS.get(status)
-        if verdict is None:
-            raise ValueError(f'Неизвестный статус домашней работы: {status}')
-    else:
-        raise KeyError(
-            'В ответе API отсутствует ключ "status" или "homework_name"'
-        )
+    if 'homework_name' not in homework:
+        raise KeyError('В ответе API отсутствует ключ "homework_name"')
+    if 'status' not in homework:
+        raise KeyError('В ответе API отсутствует ключ "status"')
+    homework_name = homework['homework_name']
+    status = homework['status']
+    if status not in HOMEWORK_VERDICTS:
+        raise ValueError(f'Неизвестный статус домашней работы: {status}')
+    verdict = HOMEWORK_VERDICTS[status]
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def main():
     """Основная логика работы бота."""
     if not check_tokens():
-        # raise TokenError("Отсутствует обязательная переменная окружения")
         sys.exit('Отсутствует обязательная переменная окружения')
     # Создаем объект класса бота
     bot = TeleBot(token=TELEGRAM_TOKEN)
